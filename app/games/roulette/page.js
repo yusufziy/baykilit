@@ -43,6 +43,8 @@ export default function Roulette() {
   const [message, setMessage] = useState('')
   const [recentSpins, setRecentSpins] = useState([])
   const [loading, setLoading] = useState(true)
+  const [bettingTime, setBettingTime] = useState(30)
+  const [isBettingPhase, setIsBettingPhase] = useState(true)
   const router = useRouter()
 
   useEffect(() => {
