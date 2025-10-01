@@ -46,13 +46,13 @@ export default function RouletteWheel({ rotation, winningNumber }) {
                     'bg-green-600'
                   }`}
                   style={{
-                    width: '40px',
+                    width: '50px',
                     height: '50%',
-                    clipPath: 'polygon(40% 0%, 60% 0%, 50% 100%)'
+                    clipPath: 'polygon(35% 0%, 65% 0%, 50% 100%)'
                   }}
                 >
                   {/* Number */}
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 text-white font-bold text-sm">
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 text-white font-bold text-base">
                     {num}
                   </div>
                 </div>
