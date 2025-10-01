@@ -253,16 +253,32 @@ export default function SlotMachine() {
                 </div>
               </div>
 
-              {/* Payout Table */}
+              {/* Payout Table with Odds */}
               <div className="space-y-2">
-                <h3 className="font-headline font-bold">Ödeme Tablosu</h3>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  {symbols.map((symbol) => (
-                    <div key={symbol.emoji} className="flex items-center justify-between p-2 bg-secondary rounded">
-                      <span>{symbol.emoji} {symbol.emoji} {symbol.emoji}</span>
-                      <span className="font-bold text-primary">{symbol.payout}x</span>
-                    </div>
-                  ))}
+                <h3 className="font-headline font-bold">Ödeme Tablosu & Şans Oranları</h3>
+                <div className="grid grid-cols-1 gap-2 text-sm">
+                  {symbols.map((symbol) => {
+                    const totalWeight = symbols.reduce((sum, s) => sum + s.weight, 0)
+                    const singleChance = (symbol.weight / totalWeight) * 100
+                    const tripleChance = Math.pow(symbol.weight / totalWeight, 3) * 100
+                    
+                    return (
+                      <div key={symbol.emoji} className="flex items-center justify-between p-3 bg-secondary rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">{symbol.emoji} {symbol.emoji} {symbol.emoji}</span>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-primary">{symbol.payout}x</div>
+                          <div className="text-xs text-muted-foreground">
+                            %{tripleChance.toFixed(2)} şans
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className="text-xs text-muted-foreground text-center pt-2 border-t border-border">
+                  💡 İpucu: 2 eşleşme ödemenin yarısını verir
                 </div>
               </div>
             </CardContent>
