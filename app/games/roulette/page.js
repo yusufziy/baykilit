@@ -314,19 +314,64 @@ export default function Roulette() {
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Wheel */}
-              <div className="relative w-64 h-64 mx-auto">
-                <div
-                  className="absolute inset-0 rounded-full border-8 border-primary flex items-center justify-center text-6xl font-bold bg-secondary transition-transform duration-5000 ease-out"
-                  style={{ transform: `rotate(${rotation}deg)` }}
-                >
-                  {winningNumber !== null ? winningNumber : '?'}
+              <div className="relative w-80 h-80 mx-auto">
+                {/* Wheel Container */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  {/* Outer rim */}
+                  <div className="absolute inset-0 rounded-full border-8 border-amber-600 shadow-2xl"></div>
+                  
+                  {/* Rotating wheel with numbers */}
+                  <div
+                    className="absolute inset-4 rounded-full overflow-hidden transition-transform duration-[5000ms] ease-out"
+                    style={{ transform: `rotate(${rotation}deg)` }}
+                  >
+                    {/* Generate wheel segments */}
+                    {[0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26].map((num, index) => {
+                      const angle = (index * 360) / 37
+                      const color = getNumberColor(num)
+                      const bgColor = color === 'red' ? 'bg-red-600' : color === 'black' ? 'bg-black' : 'bg-green-600'
+                      
+                      return (
+                        <div
+                          key={num}
+                          className={`absolute inset-0 ${bgColor}`}
+                          style={{
+                            clipPath: `polygon(50% 50%, ${50 + 50 * Math.cos((angle - 90) * Math.PI / 180)}% ${50 + 50 * Math.sin((angle - 90) * Math.PI / 180)}%, ${50 + 50 * Math.cos((angle + 360/37 - 90) * Math.PI / 180)}% ${50 + 50 * Math.sin((angle + 360/37 - 90) * Math.PI / 180)}%)`
+                          }}
+                        >
+                          <div
+                            className="absolute text-white font-bold text-xs"
+                            style={{
+                              top: '15%',
+                              left: '50%',
+                              transform: `translate(-50%, 0) rotate(${angle + 90}deg)`,
+                            }}
+                          >
+                            {num}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    
+                    {/* Center circle */}
+                    <div className="absolute inset-[35%] rounded-full bg-amber-700 border-4 border-amber-500 shadow-inner"></div>
+                  </div>
+                  
+                  {/* Pointer indicator at top */}
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-2 z-10">
+                    <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[20px] border-t-yellow-400 drop-shadow-lg"></div>
+                  </div>
                 </div>
+
+                {/* Result Display */}
                 {winningNumber !== null && (
-                  <div className={`absolute -bottom-8 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg font-bold ${
-                    getNumberColor(winningNumber) === 'red' ? 'bg-red-500' :
-                    getNumberColor(winningNumber) === 'black' ? 'bg-black' : 'bg-green-500'
-                  }`}>
-                    {winningNumber}
+                  <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 text-center">
+                    <div className={`px-6 py-3 rounded-lg font-bold text-2xl shadow-lg ${
+                      getNumberColor(winningNumber) === 'red' ? 'bg-red-500' :
+                      getNumberColor(winningNumber) === 'black' ? 'bg-black' : 'bg-green-500'
+                    }`}>
+                      {winningNumber}
+                    </div>
                   </div>
                 )}
               </div>
