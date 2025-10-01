@@ -57,6 +57,10 @@ export default function Roulette() {
           setUsername(data.username)
           setBalance(data.virtualCurrencyBalance || 0)
         }
+        
+        // Initialize roulette table
+        await initializeRouletteTable()
+        
         setLoading(false)
       }
     })
