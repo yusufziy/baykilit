@@ -8,22 +8,21 @@ import {
   getDoc, 
   updateDoc, 
   collection, 
-  addDoc, 
   query, 
   orderBy, 
   limit, 
   onSnapshot, 
   Timestamp,
   writeBatch,
-  deleteDoc,
-  getDocs
+  getDocs,
+  setDoc
 } from 'firebase/firestore'
 import { auth, db } from '@/lib/firebase'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { initializeRouletteTable } from '@/lib/initializeFirestore'
+import RouletteWheel from '@/components/RouletteWheel'
 
 const redNumbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
 const blackNumbers = [2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35]
@@ -37,14 +36,14 @@ export default function Roulette() {
   const [bet, setBet] = useState(10)
   const [selectedNumbers, setSelectedNumbers] = useState([])
   const [selectedOption, setSelectedOption] = useState(null)
-  const [isSpinning, setIsSpinning] = useState(false)
-  const [winningNumber, setWinningNumber] = useState(null)
   const [rotation, setRotation] = useState(0)
+  const [winningNumber, setWinningNumber] = useState(null)
   const [message, setMessage] = useState('')
   const [recentSpins, setRecentSpins] = useState([])
   const [loading, setLoading] = useState(true)
-  const [bettingTime, setBettingTime] = useState(30)
-  const [isBettingPhase, setIsBettingPhase] = useState(true)
+  const [timeLeft, setTimeLeft] = useState(30)
+  const [phase, setPhase] = useState('betting') // 'betting' or 'spinning'
+  const [myBets, setMyBets] = useState([])
   const router = useRouter()
 
   useEffect(() => {
@@ -60,8 +59,18 @@ export default function Roulette() {
           setBalance(data.virtualCurrencyBalance || 0)
         }
         
-        // Initialize roulette table
-        await initializeRouletteTable()
+        // Initialize table if needed
+        const tableRef = doc(db, 'roulette-tables', TABLE_ID)
+        const tableSnap = await getDoc(tableRef)
+        if (!tableSnap.exists()) {
+          await setDoc(tableRef, {
+            phase: 'betting',
+            timeLeft: 30,
+            winningNumber: null,
+            rotation: 0,
+            lastUpdate: Timestamp.now()
+          })
+        }
         
         setLoading(false)
       }
@@ -70,13 +79,14 @@ export default function Roulette() {
     return () => unsubscribe()
   }, [router])
 
+  // Listen to table state
   useEffect(() => {
-    // Listen to roulette table state
     const tableRef = doc(db, 'roulette-tables', TABLE_ID)
     const unsubscribe = onSnapshot(tableRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data()
-        setIsSpinning(data.isSpinning || false)
+        setPhase(data.phase || 'betting')
+        setTimeLeft(data.timeLeft || 30)
         setWinningNumber(data.winningNumber)
         setRotation(data.rotation || 0)
       }
@@ -85,8 +95,48 @@ export default function Roulette() {
     return () => unsubscribe()
   }, [])
 
+  // Timer countdown
   useEffect(() => {
-    // Listen to recent spins
+    if (!user) return
+
+    const interval = setInterval(async () => {
+      const tableRef = doc(db, 'roulette-tables', TABLE_ID)
+      const tableSnap = await getDoc(tableRef)
+      
+      if (tableSnap.exists()) {
+        const data = tableSnap.data()
+        const currentTime = data.timeLeft || 30
+        const currentPhase = data.phase || 'betting'
+
+        if (currentPhase === 'betting' && currentTime > 0) {
+          await updateDoc(tableRef, { timeLeft: currentTime - 1 })
+        } else if (currentPhase === 'betting' && currentTime <= 0) {
+          // Start spinning
+          await spinWheel()
+        } else if (currentPhase === 'spinning') {
+          // Wait for spin to complete (5 seconds), then reset to betting
+          const lastUpdate = data.lastUpdate?.toDate() || new Date()
+          const elapsed = (new Date() - lastUpdate) / 1000
+          
+          if (elapsed > 8) {
+            await updateDoc(tableRef, {
+              phase: 'betting',
+              timeLeft: 30,
+              lastUpdate: Timestamp.now()
+            })
+            setMyBets([])
+            setSelectedNumbers([])
+            setSelectedOption(null)
+          }
+        }
+      }
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [user])
+
+  // Listen to recent spins
+  useEffect(() => {
     const q = query(
       collection(db, 'roulette-spins'),
       orderBy('timestamp', 'desc'),
@@ -111,7 +161,7 @@ export default function Roulette() {
   }
 
   const handleNumberSelect = (num) => {
-    if (isSpinning) return
+    if (phase !== 'betting') return
     
     if (selectedNumbers.includes(num)) {
       setSelectedNumbers(selectedNumbers.filter(n => n !== num))
@@ -122,12 +172,17 @@ export default function Roulette() {
   }
 
   const handleOptionSelect = (option) => {
-    if (isSpinning) return
+    if (phase !== 'betting') return
     setSelectedOption(option)
     setSelectedNumbers([])
   }
 
   const placeBet = async () => {
+    if (phase !== 'betting') {
+      setMessage('Bahis süresi bitti!')
+      return
+    }
+
     if (bet < 1) {
       setMessage('Minimum bahis 1₺!')
       return
@@ -144,7 +199,6 @@ export default function Roulette() {
     }
 
     try {
-      // Place bet in Firestore
       const betData = {
         userId: user.uid,
         username: username,
@@ -160,11 +214,12 @@ export default function Roulette() {
         betData.value = selectedOption
       }
 
-      await addDoc(collection(db, `roulette-tables/${TABLE_ID}/bets`), betData)
+      const betRef = doc(collection(db, `roulette-tables/${TABLE_ID}/bets`))
+      await setDoc(betRef, betData)
 
-      setMessage('Bahis yerleştirildi! ✅')
+      setMyBets([...myBets, betData])
+      setMessage('✅ Bahis yerleştirildi!')
       
-      // Deduct from balance
       const newBalance = balance - bet
       setBalance(newBalance)
       await updateDoc(doc(db, 'users', user.uid), {
@@ -178,36 +233,29 @@ export default function Roulette() {
   }
 
   const spinWheel = async () => {
-    if (isSpinning) return
-
     try {
+      const tableRef = doc(db, 'roulette-tables', TABLE_ID)
+      
       // Generate winning number
       const winning = Math.floor(Math.random() * 37)
       
-      // Calculate rotation angle for the winning number
-      const anglePerNumber = 360 / 37
-      const targetAngle = winning * anglePerNumber
+      // Calculate rotation
+      const wheelOrder = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
+      const index = wheelOrder.indexOf(winning)
+      const anglePerSegment = 360 / 37
+      const targetAngle = index * anglePerSegment
       const fullRotations = 5 * 360
       const finalRotation = fullRotations + targetAngle
 
-      // Update table state
-      await updateDoc(doc(db, 'roulette-tables', TABLE_ID), {
-        isSpinning: true,
+      await updateDoc(tableRef, {
+        phase: 'spinning',
         rotation: finalRotation,
-        lastSpinTimestamp: Timestamp.now()
+        winningNumber: winning,
+        lastUpdate: Timestamp.now()
       })
 
-      // Wait for animation
-      setTimeout(async () => {
-        // Set winning number
-        await updateDoc(doc(db, 'roulette-tables', TABLE_ID), {
-          isSpinning: false,
-          winningNumber: winning
-        })
-
-        // Process all bets
-        await processBets(winning)
-      }, 5500)
+      // Process bets after 5 seconds
+      setTimeout(() => processBets(winning), 5000)
 
     } catch (error) {
       console.error('Spin error:', error)
@@ -221,6 +269,7 @@ export default function Roulette() {
       
       const batch = writeBatch(db)
       const results = []
+      const userBalanceUpdates = {}
 
       betsSnapshot.forEach((betDoc) => {
         const betData = betDoc.data()
@@ -255,42 +304,50 @@ export default function Roulette() {
           amount: won ? payout : betData.amount
         })
 
-        // Delete bet
-        batch.delete(betDoc.ref)
-
-        // Update user balance if won
         if (won) {
-          const userRef = doc(db, 'users', betData.userId)
+          if (!userBalanceUpdates[betData.userId]) {
+            userBalanceUpdates[betData.userId] = 0
+          }
+          userBalanceUpdates[betData.userId] += payout
+        }
+
+        batch.delete(betDoc.ref)
+      })
+
+      // Update user balances
+      for (const [userId, winAmount] of Object.entries(userBalanceUpdates)) {
+        const userRef = doc(db, 'users', userId)
+        const userSnap = await getDoc(userRef)
+        if (userSnap.exists()) {
+          const currentBalance = userSnap.data().virtualCurrencyBalance || 0
           batch.update(userRef, {
-            virtualCurrencyBalance: (betData.balance || 0) + payout
+            virtualCurrencyBalance: currentBalance + winAmount
           })
         }
-      })
+      }
 
       await batch.commit()
 
       // Save spin result
-      await addDoc(collection(db, 'roulette-spins'), {
+      await setDoc(doc(collection(db, 'roulette-spins')), {
         winningNumber: winning,
         results: results,
         timestamp: Timestamp.now()
       })
 
-      // Update own balance if won
-      const myResult = results.find(r => r.userId === user.uid)
-      if (myResult && myResult.result === 'kazandı') {
+      // Update my balance if won
+      if (userBalanceUpdates[user.uid]) {
         const userDoc = await getDoc(doc(db, 'users', user.uid))
         if (userDoc.exists()) {
           setBalance(userDoc.data().virtualCurrencyBalance || 0)
-          setMessage(`🎉 KAZANDINIZ! +${myResult.amount.toFixed(2)}₺`)
+          setMessage(`🎉 KAZANDINIZ! +${userBalanceUpdates[user.uid].toFixed(2)}₺`)
         }
       } else {
-        setMessage('Kaybettiniz! 😔')
+        const myResult = results.find(r => r.userId === user.uid)
+        if (myResult) {
+          setMessage('Kaybettiniz! 😔')
+        }
       }
-
-      // Clear selections
-      setSelectedNumbers([])
-      setSelectedOption(null)
 
     } catch (error) {
       console.error('Process bets error:', error)
@@ -312,71 +369,24 @@ export default function Roulette() {
         <div className="lg:col-span-2 space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="font-headline text-3xl text-center">🎰 Roulette</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Wheel */}
-              <div className="relative w-80 h-80 mx-auto">
-                {/* Wheel Container */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  {/* Outer rim */}
-                  <div className="absolute inset-0 rounded-full border-8 border-amber-600 shadow-2xl"></div>
-                  
-                  {/* Rotating wheel with numbers */}
-                  <div
-                    className="absolute inset-4 rounded-full overflow-hidden transition-transform duration-[5000ms] ease-out"
-                    style={{ transform: `rotate(${rotation}deg)` }}
-                  >
-                    {/* Generate wheel segments */}
-                    {[0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26].map((num, index) => {
-                      const angle = (index * 360) / 37
-                      const color = getNumberColor(num)
-                      const bgColor = color === 'red' ? 'bg-red-600' : color === 'black' ? 'bg-black' : 'bg-green-600'
-                      
-                      return (
-                        <div
-                          key={num}
-                          className={`absolute inset-0 ${bgColor}`}
-                          style={{
-                            clipPath: `polygon(50% 50%, ${50 + 50 * Math.cos((angle - 90) * Math.PI / 180)}% ${50 + 50 * Math.sin((angle - 90) * Math.PI / 180)}%, ${50 + 50 * Math.cos((angle + 360/37 - 90) * Math.PI / 180)}% ${50 + 50 * Math.sin((angle + 360/37 - 90) * Math.PI / 180)}%)`
-                          }}
-                        >
-                          <div
-                            className="absolute text-white font-bold text-xs"
-                            style={{
-                              top: '15%',
-                              left: '50%',
-                              transform: `translate(-50%, 0) rotate(${angle + 90}deg)`,
-                            }}
-                          >
-                            {num}
-                          </div>
-                        </div>
-                      )
-                    })}
-                    
-                    {/* Center circle */}
-                    <div className="absolute inset-[35%] rounded-full bg-amber-700 border-4 border-amber-500 shadow-inner"></div>
+              <CardTitle className="font-headline text-3xl text-center">
+                🎰 Roulette
+              </CardTitle>
+              <div className="text-center">
+                {phase === 'betting' ? (
+                  <div className="text-2xl font-bold text-primary">
+                    Bahis Süresi: {timeLeft}s
                   </div>
-                  
-                  {/* Pointer indicator at top */}
-                  <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-2 z-10">
-                    <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[20px] border-t-yellow-400 drop-shadow-lg"></div>
-                  </div>
-                </div>
-
-                {/* Result Display */}
-                {winningNumber !== null && (
-                  <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 text-center">
-                    <div className={`px-6 py-3 rounded-lg font-bold text-2xl shadow-lg ${
-                      getNumberColor(winningNumber) === 'red' ? 'bg-red-500' :
-                      getNumberColor(winningNumber) === 'black' ? 'bg-black' : 'bg-green-500'
-                    }`}>
-                      {winningNumber}
-                    </div>
+                ) : (
+                  <div className="text-2xl font-bold text-amber-500">
+                    Çark Dönüyor! 🎲
                   </div>
                 )}
               </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Wheel */}
+              <RouletteWheel rotation={rotation} winningNumber={phase === 'betting' ? null : winningNumber} />
 
               {/* Message */}
               {message && (
@@ -391,87 +401,97 @@ export default function Roulette() {
                 </div>
               )}
 
-              {/* Number Grid */}
-              <div>
-                <h3 className="font-headline font-bold mb-2">Sayılar</h3>
-                <div className="grid grid-cols-12 gap-1">
-                  <div
-                    onClick={() => handleNumberSelect(0)}
-                    className={`col-span-12 h-12 flex items-center justify-center rounded font-bold cursor-pointer border-2 transition-all ${
-                      selectedNumbers.includes(0)
-                        ? 'border-primary bg-primary/20'
-                        : 'border-border bg-green-600 hover:bg-green-500'
-                    }`}
-                  >
-                    0
-                  </div>
-                  {[...Array(36)].map((_, i) => {
-                    const num = i + 1
-                    const color = getNumberColor(num)
-                    return (
+              {phase === 'betting' && (
+                <>
+                  {/* Number Grid */}
+                  <div>
+                    <h3 className="font-headline font-bold mb-2">Sayılar</h3>
+                    <div className="grid grid-cols-13 gap-1">
                       <div
-                        key={num}
-                        onClick={() => handleNumberSelect(num)}
-                        className={`col-span-4 h-12 flex items-center justify-center rounded font-bold cursor-pointer border-2 transition-all ${
-                          selectedNumbers.includes(num)
-                            ? 'border-primary bg-primary/20'
-                            : color === 'red'
-                            ? 'border-border bg-red-600 hover:bg-red-500'
-                            : 'border-border bg-black hover:bg-gray-800'
+                        onClick={() => handleNumberSelect(0)}
+                        className={`col-span-13 h-12 flex items-center justify-center rounded font-bold cursor-pointer border-2 transition-all ${
+                          selectedNumbers.includes(0)
+                            ? 'border-primary bg-primary/20 scale-95'
+                            : 'border-border bg-green-600 hover:bg-green-500'
                         }`}
                       >
-                        {num}
+                        0
                       </div>
-                    )
-                  })}
-                </div>
-              </div>
+                      {[...Array(36)].map((_, i) => {
+                        const num = i + 1
+                        const color = getNumberColor(num)
+                        return (
+                          <div
+                            key={num}
+                            onClick={() => handleNumberSelect(num)}
+                            className={`col-span-1 h-12 flex items-center justify-center rounded font-bold cursor-pointer border-2 transition-all text-sm ${
+                              selectedNumbers.includes(num)
+                                ? 'border-primary bg-primary/20 scale-95'
+                                : color === 'red'
+                                ? 'border-border bg-red-600 hover:bg-red-500'
+                                : 'border-border bg-gray-900 hover:bg-gray-800'
+                            }`}
+                          >
+                            {num}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
 
-              {/* Options */}
-              <div>
-                <h3 className="font-headline font-bold mb-2">Seçenekler</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {['Kırmızı', 'Siyah', 'Çift', 'Tek'].map((option) => (
-                    <Button
-                      key={option}
-                      onClick={() => handleOptionSelect(option)}
-                      variant={selectedOption === option ? 'default' : 'outline'}
-                      className="h-12"
-                    >
-                      {option}
+                  {/* Options */}
+                  <div>
+                    <h3 className="font-headline font-bold mb-2">Seçenekler</h3>
+                    <div className="grid grid-cols-2 gap-2">
+                      {['Kırmızı', 'Siyah', 'Çift', 'Tek'].map((option) => (
+                        <Button
+                          key={option}
+                          onClick={() => handleOptionSelect(option)}
+                          variant={selectedOption === option ? 'default' : 'outline'}
+                          className="h-12"
+                        >
+                          {option}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Bet Controls */}
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="bet">Bahis Miktarı (₺)</Label>
+                      <Input
+                        id="bet"
+                        type="number"
+                        min="1"
+                        max={balance}
+                        value={bet}
+                        onChange={(e) => setBet(Number(e.target.value))}
+                      />
+                    </div>
+
+                    <Button onClick={placeBet} className="w-full h-12">
+                      💰 Bahis Yerleştir
                     </Button>
-                  ))}
-                </div>
-              </div>
 
-              {/* Bet Controls */}
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="bet">Bahis Miktarı (₺)</Label>
-                  <Input
-                    id="bet"
-                    type="number"
-                    min="1"
-                    max={balance}
-                    value={bet}
-                    onChange={(e) => setBet(Number(e.target.value))}
-                    disabled={isSpinning}
-                  />
-                </div>
+                    <div className="text-center text-sm text-muted-foreground">
+                      Bakiyeniz: <span className="font-bold text-primary">{balance.toFixed(2)}₺</span>
+                    </div>
+                  </div>
 
-                <div className="flex gap-2">
-                  <Button onClick={placeBet} disabled={isSpinning} className="flex-1">
-                    Bahis Yerleştir
-                  </Button>
-                  <Button onClick={spinWheel} disabled={isSpinning} variant="default" className="flex-1">
-                    {isSpinning ? 'Çevriliyor...' : '🎰 ÇEVİR'}
-                  </Button>
-                </div>
-
-                <div className="text-center text-sm text-muted-foreground">
-                  Bakiyeniz: <span className="font-bold text-primary">{balance.toFixed(2)}₺</span>
-                </div>
-              </div>
+                  {/* My Bets */}
+                  {myBets.length > 0 && (
+                    <div className="p-4 bg-secondary/50 rounded-lg">
+                      <h4 className="font-bold mb-2">Bahisleriniz:</h4>
+                      {myBets.map((b, idx) => (
+                        <div key={idx} className="text-sm">
+                          {b.type === 'number' ? `Sayılar: ${b.value.join(', ')}` : b.value} - {b.amount}₺
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -486,10 +506,14 @@ export default function Roulette() {
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {recentSpins.map((spin) => (
                   <div key={spin.id} className="space-y-2">
-                    <div className="p-2 rounded-lg bg-secondary text-center font-bold">
+                    <div className={`p-2 rounded-lg text-center font-bold ${
+                      getNumberColor(spin.winningNumber) === 'red' ? 'bg-red-600' :
+                      getNumberColor(spin.winningNumber) === 'black' ? 'bg-gray-900' :
+                      'bg-green-600'
+                    }`}>
                       Kazanan: {spin.winningNumber}
                     </div>
-                    {spin.results && spin.results.map((result, idx) => (
+                    {spin.results && spin.results.slice(0, 5).map((result, idx) => (
                       <div
                         key={idx}
                         className={`p-2 rounded-lg border text-sm ${
@@ -501,7 +525,7 @@ export default function Roulette() {
                         <div className="flex items-center justify-between">
                           <span className="font-semibold">{result.username}</span>
                           <span>
-                            {result.result === 'kazandı' ? '+' : '-'}{result.amount.toFixed(2)}₺
+                            {result.result === 'kazandı' ? '+' : '-'}{result.amount.toFixed(0)}₺
                           </span>
                         </div>
                       </div>
