@@ -81,9 +81,11 @@ export default function Games() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Button className="w-full" disabled>
-                Yakında
-              </Button>
+              <Link href="/games/blackjack">
+                <Button className="w-full">
+                  Oyna
+                </Button>
+              </Link>
             </CardContent>
           </Card>
         </div>
