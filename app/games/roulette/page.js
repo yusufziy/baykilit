@@ -406,10 +406,10 @@ export default function Roulette() {
                   {/* Number Grid */}
                   <div>
                     <h3 className="font-headline font-bold mb-2">Sayılar</h3>
-                    <div className="grid grid-cols-13 gap-1">
+                    <div className="grid grid-cols-12 gap-2">
                       <div
                         onClick={() => handleNumberSelect(0)}
-                        className={`col-span-13 h-12 flex items-center justify-center rounded font-bold cursor-pointer border-2 transition-all ${
+                        className={`col-span-12 h-14 flex items-center justify-center rounded-lg font-bold text-xl cursor-pointer border-2 transition-all ${
                           selectedNumbers.includes(0)
                             ? 'border-primary bg-primary/20 scale-95'
                             : 'border-border bg-green-600 hover:bg-green-500'
@@ -424,7 +424,7 @@ export default function Roulette() {
                           <div
                             key={num}
                             onClick={() => handleNumberSelect(num)}
-                            className={`col-span-1 h-12 flex items-center justify-center rounded font-bold cursor-pointer border-2 transition-all text-sm ${
+                            className={`col-span-1 h-14 flex items-center justify-center rounded-lg font-bold text-lg cursor-pointer border-2 transition-all ${
                               selectedNumbers.includes(num)
                                 ? 'border-primary bg-primary/20 scale-95'
                                 : color === 'red'
